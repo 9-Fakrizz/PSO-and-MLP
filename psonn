@@ -1,0 +1,146 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+
+
+def data_read(file_path):
+    data = []
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+        for line in lines:
+            line = line.strip().split(',')
+            data.append(line)
+    return data
+
+source_data = 'airQ.txt'
+data = data_read(source_data)
+data = np.array([line[0].split('\t') for line in data])
+data = data.astype(float)
+#data = data // 2000
+#print(data[0][1])
+k=0.1
+output_data = data[:, 2]
+input_data = np.delete(data,(1,2,4,6), axis=1)
+fold_bes_mae = []
+fold_test_mae =[]
+
+for fold in range(1,3):
+    print(fold)
+    point1 = (input_data.shape[0])*k
+    point2 = (output_data.shape[0])*k
+    point1 = int(point1)
+    point2 = int(point2)
+    input_data_train = input_data[point1:,:]
+    input_data_test = input_data[:point1,:]
+    output_data_train =output_data[point2:]
+    output_data_test = output_data[:point2]
+
+    if fold == 2:
+        input_data_train = input_data[:((input_data.shape[0])-point1),:]
+        input_data_test = input_data[((input_data.shape[0])-point1):,:]
+        output_data_train =output_data[:((output_data.shape[0])-point1)]
+        output_data_test = output_data[((output_data.shape[0])-point1):]
+
+    ##--------------------------------------------------------
+    input_nodes = input_data.shape[1]
+    hidden_nodes = 5 
+    output_nodes = 1
+    num_particles = 20
+    num_dimensions = (input_nodes * hidden_nodes) + (hidden_nodes * output_nodes)
+    num_iterations = 25
+    ##---------------------------------------------------------
+    def find_mae(weights,input_data_train, output_data_train):
+        
+        def activation(x):
+            return 1/(1+np.exp(-x))
+        
+        weights_input_hidden = weights[:input_nodes * hidden_nodes].reshape((input_nodes, hidden_nodes))
+        weights_hidden_output = weights[input_nodes * hidden_nodes:].reshape((hidden_nodes, output_nodes))
+
+        # Implement the forward pass of the MLP
+        hidden_layer_input = np.dot(input_data_train, weights_input_hidden)
+        hidden_layer_output = activation(hidden_layer_input)
+        output_layer_input = np.dot(hidden_layer_output, weights_hidden_output)
+        output_layer_output = output_layer_input  # No activation function for output
+
+        # Calculate MAE on the validation data
+        absolute_errors = np.abs(output_layer_output - output_data_train)
+        mae = np.mean(absolute_errors)
+
+        return mae
+
+    # Define a function for PSO optimization
+    def optimize_mlp(input_data_train, output_data_train):
+        c1 = 1.5
+        c2 = 1.5
+        w = 0.7
+        def initialize_particles(num_particles, num_dimensions):
+            return np.random.uniform(-1, 1, (num_particles, num_dimensions))
+
+        def update_particles(particles, velocities, best_positions, global_best_position, c1, c2, w):
+            for i in range(particles.shape[0]):  # ลูปตามจำนวนพาทิเคิล
+                # Generate random values for r1 and r2
+                r1 = np.random.rand()
+                r2 = np.random.rand()
+
+                # Check if global_best_position is not None
+                if global_best_position is not None:
+                    # Update velocity using the PSO equation
+                    cognitive_velocity = c1 * r1 * (best_positions[i] - particles[i])
+                    social_velocity = c2 * r2 * (global_best_position - particles[i])
+                    velocities[i] = w * velocities[i] + cognitive_velocity + social_velocity
+
+                    # Update particle position using the updated velocity
+                    particles[i] = particles[i] + velocities[i]
+
+                    # Apply bounds to particle position
+                    particles[i] = np.maximum(particles[i], lb)
+                    particles[i] = np.minimum(particles[i], ub)
+        
+        lb = np.full(num_dimensions, -1)  # Lower bound for weights
+        ub = np.full(num_dimensions, 1)   # Upper bound for weights
+
+        particles = initialize_particles(num_particles, num_dimensions)
+        velocities = np.zeros((num_particles, num_dimensions))
+        best_positions = particles.copy()
+        best_mae = np.full(num_particles, float('inf'))
+        global_best_position = None
+        global_best_mae = float('inf')
+        
+        for iteration in range(num_iterations):
+            update_particles(particles, velocities, best_positions, global_best_position, c1, c2, w)
+            for i in range(num_particles):
+                mae = find_mae(particles[i],input_data_train, output_data_train)
+                if mae < best_mae[i]:
+                    best_mae[i] = mae
+                    best_positions[i] = particles[i]
+                if mae < global_best_mae:
+                    global_best_mae = mae
+                    global_best_position = particles[i]
+
+        return global_best_mae, global_best_position
+
+    
+    best_mae, best_weights = optimize_mlp(input_data_train, output_data_train)
+    #print("Best Mean Absolute Error:", best_mae)
+    #print("Best Position:", best_weights)
+    test_case_mae = find_mae(best_weights,input_data_test,output_data_test)
+    #print("Test Case Mae = ",test_case_mae)
+    fold_bes_mae.append(best_mae)
+    fold_test_mae.append(test_case_mae)
+
+print("best mae 2 fold : ",fold_bes_mae)
+print("test mae 2 fold : ",fold_test_mae)
+
+
+fold_names = ['Fold 1', 'Fold 2']
+num_folds = len(fold_names)
+bar_width = 0.35
+index = range(num_folds)
+plt.bar(index, fold_bes_mae, bar_width, label='Train', color='b')
+plt.bar([i + bar_width for i in index], fold_test_mae, bar_width, label='Test', color='r')
+plt.xlabel('Folds')
+plt.xticks([i + bar_width / 2 for i in index], fold_names)
+plt.ylabel('Mean Absolute Error (MAE)')
+plt.legend(loc='upper right')
+plt.show()
